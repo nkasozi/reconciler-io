@@ -1,12 +1,10 @@
 package reconstruction
 
 import (
-	"encoding/csv"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"github.com/stretchr/testify/assert"
-	"os"
 	"reconciler.io/models"
+	"reconciler.io/models/enums/file_purpose"
 	"testing"
 )
 
@@ -15,35 +13,137 @@ func TestFileReconstructionActivity(t *testing.T) {
 	RunSpecs(t, "File Reconstruction Activity Suite")
 }
 
-var _ = Describe("ReconstructFile", func() {
-	Context("when provided with valid pre-processing sections", func() {
-		It("should reconstruct the pre-processing in the correct order", func() {
-			// Define test pre-processing sections
-			fileSectionsStream := make(chan models.FileSection, 3)
-			fileSectionsStream <- models.FileSection{SectionSequenceNumber: 2, ColumnHeaders: []string{"A", "B"}, SectionRows: []models.FileSectionRow{{ParsedColumnsFromRow: []string{"2A", "2B"}}}}
-			fileSectionsStream <- models.FileSection{SectionSequenceNumber: 1, ColumnHeaders: []string{"A", "B"}, SectionRows: []models.FileSectionRow{{ParsedColumnsFromRow: []string{"1A", "1B"}}}}
-			fileSectionsStream <- models.FileSection{SectionSequenceNumber: 3, ColumnHeaders: []string{"A", "B"}, SectionRows: []models.FileSectionRow{{ParsedColumnsFromRow: []string{"3A", "3B"}}}}
-			close(fileSectionsStream)
+var _ = Describe("CheckIfFullFileHasBeenReconstructed", func() {
 
-			outputPath := "test_output.csv"
-			defer os.Remove(outputPath)
+	Context("when fileSections is empty", func() {
+		It("should return false", func() {
+			Expect(checkIfFullFileHasBeenReconstructed(
+				[]models.FileSection{},
+			)).To(BeFalse())
+		})
+	})
 
-			// Call the ReconstructFile function
-			err := ReconstructFile(fileSectionsStream, outputPath)
-			Expect(err).NotTo(HaveOccurred())
+	Context("when fileSections has only one section", func() {
+		It("should return false", func() {
+			sections := []models.FileSection{
+				{
+					ID:                    "1",
+					SectionSequenceNumber: 1,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+			}
+			Expect(checkIfFullFileHasBeenReconstructed(sections)).To(BeFalse())
+		})
+	})
 
-			// Open and read the reconstructed CSV pre-processing
-			file, err := os.Open(outputPath)
-			Expect(err).NotTo(HaveOccurred())
-			reader := csv.NewReader(file)
-			records, err := reader.ReadAll()
-			Expect(err).NotTo(HaveOccurred())
+	Context("when fileSections has all sections", func() {
+		It("should return true", func() {
+			sections := []models.FileSection{
+				{
+					ID:                    "2",
+					SectionSequenceNumber: 2,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         true,
+				},
+				{
+					ID:                    "1",
+					SectionSequenceNumber: 1,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+			}
+			Expect(checkIfFullFileHasBeenReconstructed(sections)).To(BeTrue())
+		})
+	})
 
-			// Verify the order and content of the reconstructed pre-processing
-			assert.Equal(GinkgoT(), []string{"A", "B"}, records[0])
-			assert.Equal(GinkgoT(), []string{"1A", "1B"}, records[1])
-			assert.Equal(GinkgoT(), []string{"2A", "2B"}, records[2])
-			assert.Equal(GinkgoT(), []string{"3A", "3B"}, records[3])
+	Context("when fileSections has more than one section but some sections are missing", func() {
+		It("should return false", func() {
+			sections := []models.FileSection{
+				{
+					ID:                    "2",
+					SectionSequenceNumber: 2,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+				{
+					ID:                    "2",
+					SectionSequenceNumber: 5,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         true,
+				},
+				{
+					ID:                    "1",
+					SectionSequenceNumber: 1,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+			}
+			Expect(checkIfFullFileHasBeenReconstructed(sections)).To(BeFalse())
+		})
+	})
+
+	Context("when fileSections has no section beginning file", func() {
+		It("should return false", func() {
+			sections := []models.FileSection{
+				{
+					ID:                    "2",
+					SectionSequenceNumber: 2,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+				{
+					ID:                    "3",
+					SectionSequenceNumber: 3,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+				{
+					ID:                    "4",
+					SectionSequenceNumber: 4,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+			}
+			Expect(checkIfFullFileHasBeenReconstructed(sections)).To(BeFalse())
+		})
+	})
+
+	Context("when fileSections has more than one section but has no last sections", func() {
+		It("should return false", func() {
+			sections := []models.FileSection{
+				{
+					ID:                    "2",
+					SectionSequenceNumber: 2,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+				{
+					ID:                    "3",
+					SectionSequenceNumber: 3,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+				{
+					ID:                    "1",
+					SectionSequenceNumber: 1,
+					OriginalFilePurpose:   file_purpose.PrimaryFile,
+					ReconConfig:           models.ReconciliationConfigs{},
+					IsLastSection:         false,
+				},
+			}
+			Expect(checkIfFullFileHasBeenReconstructed(sections)).To(BeFalse())
 		})
 	})
 })

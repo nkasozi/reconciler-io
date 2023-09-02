@@ -30,6 +30,7 @@ func ReconstructFile(taskId string, reconstructFileSectionsStream models.StreamP
 		return err
 	}
 
+	//receive all file sections and make sure the file has been reconstructed
 	for {
 		section, err := reconstructFileSectionsStreamConsumer.FetchNext()
 
@@ -38,6 +39,7 @@ func ReconstructFile(taskId string, reconstructFileSectionsStream models.StreamP
 			continue
 		}
 
+		log.Printf("received reconstruct fileSection:[%v]", section.SectionSequenceNumber)
 		fileSections = append(fileSections, *section)
 
 		hasBeenReconstructed := checkIfFullFileHasBeenReconstructed(fileSections)
@@ -47,6 +49,30 @@ func ReconstructFile(taskId string, reconstructFileSectionsStream models.StreamP
 		}
 	}
 
+	// since we have a full file, we can write out the results
+	err = writeReconResultsOutToFile(outputPath, fileSections)
+
+	// failed to write results
+	if err != nil {
+		return fmt.Errorf("failed to write results to file: %v", err)
+	}
+
+	// clean up the topics that were created
+	err = reconstructFileSectionsStream.DeleteStreamTopic(
+		utils.NewContextWithDefaultTimeout(),
+		constants.FILE_RECONSTRUCTION_STREAM_NAME,
+		toBeReconstructedStreamTopicName,
+	)
+
+	// failed to clean up the topics results
+	if err != nil {
+		return fmt.Errorf("failed to delete reconstruct stream topics: %v", err)
+	}
+
+	return nil
+}
+
+func writeReconResultsOutToFile(outputPath string, fileSections []models.FileSection) error {
 	// Create and open the output CSV pre-processing
 	file, err := os.Create(outputPath)
 	if err != nil {
@@ -79,7 +105,6 @@ func ReconstructFile(taskId string, reconstructFileSectionsStream models.StreamP
 			}
 		}
 	}
-
 	return nil
 }
 

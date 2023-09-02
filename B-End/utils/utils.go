@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"reconciler.io/constants"
 	"reconciler.io/models/enums/file_storage_locations"
 	"reconciler.io/models/enums/supported_file_extensions"
 	"time"
@@ -45,6 +46,6 @@ func NewContextWithTimeout(timeout time.Duration) (context.Context, context.Canc
 
 // NewContextWithDefaultTimeout creates a new context with a specific timeout duration.
 func NewContextWithDefaultTimeout() context.Context {
-	ctx, _ := NewContextWithTimeout(2 * time.Minute)
+	ctx, _ := NewContextWithTimeout(constants.DEFAULT_NATS_TIMEOUT_IN_MINUTES)
 	return ctx
 }

@@ -10,8 +10,10 @@ import (
 
 type StreamProvider interface {
 	SetupStream(ctx context.Context, streamName string, topicName string) error
+	DeleteStreamTopic(ctx context.Context, streamName string, topicName string) error
 	PublishToTopic(ctx context.Context, topicName string, data interface{}) error
 	CreateStreamConsumer(ctx context.Context, streamName, topicName, consumerName string) (StreamConsumer, error)
+	DeleteStreamConsumer(ctx context.Context, streamName string, consumerName string) error
 }
 
 type NatsStreamProvider struct {
@@ -77,6 +79,40 @@ func (sc *NatsStreamProvider) SetupStream(ctx context.Context, streamName string
 	return nil
 }
 
+func (sc *NatsStreamProvider) DeleteStreamTopic(ctx context.Context, streamName string, topicName string) error {
+	// try to get the existing stream
+	stream, err := sc.channel.Stream(ctx, streamName)
+
+	// if the stream doesn't exist,
+	// we don't need to do anything
+	if err != nil {
+		return nil
+	}
+
+	// Update the stream to delete the  subject
+	_, err = sc.channel.UpdateStream(ctx, jetstream.StreamConfig{
+		Name:     streamName,
+		Subjects: deleteByValue(stream.CachedInfo().Config.Subjects, topicName),
+	})
+
+	// failed to delete
+	if err != nil {
+		return fmt.Errorf("failed to update stream: %w", err)
+	}
+
+	//success
+	return nil
+}
+
+func deleteByValue(subjects []string, name string) []string {
+	for i, v := range subjects {
+		if v == name {
+			return append(subjects[:i], subjects[i+1:]...)
+		}
+	}
+	return subjects
+}
+
 func (sc *NatsStreamProvider) PublishToTopic(
 	ctx context.Context,
 	topicName string,
@@ -115,4 +151,17 @@ func (sc *NatsStreamProvider) CreateStreamConsumer(
 		return nil, err
 	}
 	return NewFileSectionsStreamConsumer(cons), nil
+}
+
+func (sc *NatsStreamProvider) DeleteStreamConsumer(
+	ctx context.Context,
+	streamName string,
+	consumerName string,
+) error {
+	err := sc.channel.DeleteConsumer(
+		ctx,
+		streamName,
+		consumerName,
+	)
+	return err
 }

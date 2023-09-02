@@ -18,13 +18,16 @@ func BeginFileReconciliation(
 	comparisonFile models.FileToBeRead,
 	reconTaskDetails models.ReconTaskDetails,
 ) error {
+
 	//create a consumer on the primary file sections stream
 	log.Printf("creating primaryFileSectionsStreamConsumer for file: [%v]", primaryFile.ID)
+	consumerId := primaryFile.ID
+	topicName := primaryFile.ID
 	primaryFileSectionsStreamConsumer, err := primaryFile.ReadFileResultsStream.CreateStreamConsumer(
 		utils.NewContextWithDefaultTimeout(),
 		constants.PRIMARY_FILE_SECTIONS_STREAM_NAME,
-		primaryFile.ID,
-		primaryFile.ID,
+		topicName,
+		consumerId,
 	)
 
 	//err on creating consumer
@@ -33,10 +36,12 @@ func BeginFileReconciliation(
 		return err
 	}
 
+	log.Printf("successfully created primaryFileSectionsStreamConsumer for file: [%v]", primaryFile.ID)
+
 	var wg sync.WaitGroup
 	for {
 		//for each primary file section
-		//we spin up a separate consumer
+		//we will spin up a separate consumer
 		//on the comparison file stream
 		wg.Add(1)
 
@@ -47,6 +52,8 @@ func BeginFileReconciliation(
 			log.Printf("Error getting next PrimarySection: %v", err)
 			break
 		}
+
+		log.Printf("Begining reconciliation for PrimaryFileSection:[%v]", primaryFileSection.SectionSequenceNumber)
 
 		go func(
 			primaryFileSection models.FileSection,
@@ -69,6 +76,7 @@ func BeginFileReconciliation(
 				primaryFileSection.SectionSequenceNumber,
 				primaryFileSection.FileID,
 			)
+
 			//reconcile the section from the primary file
 			reconciledFileSection, err := ReconcileFileSection(
 				primaryFileSection,
@@ -85,6 +93,7 @@ func BeginFileReconciliation(
 					primaryFileSection.SectionSequenceNumber,
 					primaryFileSection.FileID,
 				)
+				return
 			}
 
 			log.Printf(
@@ -99,8 +108,8 @@ func BeginFileReconciliation(
 			//we mark them as failed with the reason that no matching row found
 			reconciledFileSection = giveEachRowAFinalReconStatus(reconciledFileSection)
 
-			//publish the reconciled file section to the reconstruction
-			//channel
+			//publish the reconciled file section
+			//to the reconstruction channel
 			toBeReconstructedStreamTopicName := fmt.Sprintf("Reconstruct-%v", reconciledFileSection.TaskID)
 			err = fileReconstructionChannel.PublishToTopic(
 				context.Background(),
@@ -108,6 +117,7 @@ func BeginFileReconciliation(
 				reconciledFileSection,
 			)
 
+			//failed to publish
 			if err != nil {
 				log.Printf(
 					"Failed to publish to reconstruction channel"+
@@ -116,6 +126,7 @@ func BeginFileReconciliation(
 					primaryFileSection.SectionSequenceNumber,
 					primaryFileSection.FileID,
 				)
+				return
 			}
 		}(
 			*primaryFileSection,
@@ -129,6 +140,20 @@ func BeginFileReconciliation(
 	// Wait for all recon go routines
 	// to finish
 	wg.Wait()
+
+	// clean up the consumers that were created
+	err = primaryFile.ReadFileResultsStream.DeleteStreamConsumer(
+		utils.NewContextWithDefaultTimeout(),
+		constants.PRIMARY_FILE_SECTIONS_STREAM_NAME,
+		consumerId,
+	)
+
+	if err != nil {
+		log.Printf("Error deleting PrimaryFileSectionConsumer: [%v], Error: %v", consumerId, err)
+	} else {
+		log.Printf("Successfully deleted PrimaryFileSectionConsumer: [%v]", consumerId)
+	}
+
 	return nil
 }
 
@@ -183,6 +208,14 @@ func ReconcileFileSection(
 			break
 		}
 
+		log.Printf(
+			"Recieved ComparisonFileSection [%v] "+
+				"for PrimaryFileSection [%v], FileID: [%v]",
+			comparisonSection.SectionSequenceNumber,
+			primarySection.SectionSequenceNumber,
+			primarySection.FileID,
+		)
+
 		if comparisonSection.OriginalFilePurpose != file_purpose.ComparisonFile {
 			return models.FileSection{}, errors.New("comparison section must be of type ComparisonFile")
 		}
@@ -214,13 +247,31 @@ func ReconcileFileSection(
 		}
 	}
 
+	err = comparisonSectionsStream.DeleteStreamConsumer(
+		utils.NewContextWithDefaultTimeout(),
+		constants.COMPARISON_FILE_SECTIONS_STREAM_NAME,
+		consumerId,
+	)
+
+	if err != nil {
+		log.Printf("Error deleting ComparsionFileSectionConsumer: [%v], Error: %v", consumerId, err)
+	} else {
+		log.Printf("Successfully deleted ComparsionFileSectionConsumer: [%v]", consumerId)
+	}
+
 	return primarySection, nil
 }
 
 func reconcileWithComparisonSection(primarySection models.FileSection, comparisonSection models.FileSection, reconConfig models.ReconciliationConfigs) models.FileSection {
 	for i, primaryRow := range primarySection.SectionRows {
 		for _, comparisonRow := range comparisonSection.SectionRows {
-			found, rowReconStatus, reasons := isRowMatch(primaryRow, comparisonRow, primarySection.ComparisonPairs, reconConfig)
+			found, rowReconStatus, reasons := isRowMatch(
+				primaryRow,
+				comparisonRow,
+				primarySection.ComparisonPairs,
+				reconConfig,
+				primarySection.ColumnHeaders,
+			)
 			if found {
 				log.Printf(
 					"Found match between PrimaryFileSectionRow [%v] "+
@@ -254,6 +305,7 @@ func isRowMatch(
 	comparisonRow models.FileSectionRow,
 	comparisonPairs []models.ComparisonPair,
 	reconConfig models.ReconciliationConfigs,
+	columnHeaders []string,
 ) (bool, recon_status.ReconciliationStatus, []string) {
 	//check if this is supposed to be the same row in both files
 	//by using the comparison pair is row identifier
@@ -285,13 +337,16 @@ func isRowMatch(
 
 		if reconConfig.ShouldReconciliationBeCaseSensitive {
 			if primaryValue != comparisonValue {
-				reason := fmt.Sprintf("RowMismatchFound. \n"+
-					"PrimaryFileRow: [%v] \n"+
-					"ComparisonFileRow: [%v] \n"+
-					"PrimaryFile value: [%v] \n"+
-					"ComparisonFile value: [%v]\n",
+				reason := fmt.Sprintf(
+					"RowMismatchFound. \n"+
+						"PrimaryFileRow: [%v] PrimaryFileColumn: [%v] \n"+
+						"ComparisonFileRow: [%v] ComparisonFileColumn: [%v] \n"+
+						"PrimaryFile value: [%v] \n"+
+						"ComparisonFile value: [%v]\n",
 					primaryRow.RowNumber,
+					columnHeaders[pair.PrimaryFileColumnIndex],
 					comparisonRow.RowNumber,
+					columnHeaders[pair.ComparisonFileColumnIndex],
 					primaryValue,
 					comparisonValue,
 				)
@@ -299,13 +354,16 @@ func isRowMatch(
 			}
 		} else {
 			if primaryValue != comparisonValue {
-				reason := fmt.Sprintf("RowMismatchFound. \n"+
-					"PrimaryFileRow: [%v] \n"+
-					"ComparisonFileRow: [%v] \n"+
-					"PrimaryFile value: [%v] \n"+
-					"ComparisonFile value: [%v]\n",
+				reason := fmt.Sprintf(
+					"RowMismatchFound. \n"+
+						"PrimaryFileRow: [%v] PrimaryFileColumn: [%v] \n"+
+						"ComparisonFileRow: [%v] ComparisonFileColumn: [%v] \n"+
+						"PrimaryFile value: [%v] \n"+
+						"ComparisonFile value: [%v]\n",
 					primaryRow.RowNumber,
+					columnHeaders[pair.PrimaryFileColumnIndex],
 					comparisonRow.RowNumber,
+					columnHeaders[pair.ComparisonFileColumnIndex],
 					primaryValue,
 					comparisonValue,
 				)
