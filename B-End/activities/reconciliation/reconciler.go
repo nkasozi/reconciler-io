@@ -308,11 +308,11 @@ func isRowMatch(
 	columnHeaders []string,
 ) (bool, recon_status.ReconciliationStatus, []string) {
 	//check if this is supposed to be the same row in both files
-	//by using the comparison pair is row identifier
-	//a row identifier can be made up of 2 or more properties
+	//by using the comparison pair isRowIdentifier flag
+	//a row identifier can be made up of 1 or more comparison pairs
 	rowIdentifierComparisonPairs, nonRowIdComparisonPairs := getRowIdentifierComparisonPairs(comparisonPairs)
 
-	//first make sure all the values in the rowIdCompPairs
+	//first make sure all the values in the rowIdComparisonPairs
 	//are the same. if they are the same then we can know
 	//that the rest of the other values in this row must match
 	for _, pair := range rowIdentifierComparisonPairs {
@@ -330,7 +330,7 @@ func isRowMatch(
 		}
 	}
 
-	//now we can check for the other values in comp pairs
+	//now we can match the other values in the comparison pair columns
 	for _, pair := range nonRowIdComparisonPairs {
 		primaryValue := primaryRow.ParsedColumnsFromRow[pair.PrimaryFileColumnIndex]
 		comparisonValue := comparisonRow.ParsedColumnsFromRow[pair.ComparisonFileColumnIndex]
@@ -372,6 +372,8 @@ func isRowMatch(
 		}
 	}
 
+	// by this time, we know that all the values in the row
+	// are the exact same. We can mark the row as reconciled
 	reason := fmt.Sprintf(
 		"RowMatchFound. \n"+
 			"PrimaryFile Row: [%v] \n"+
