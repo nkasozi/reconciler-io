@@ -17,12 +17,13 @@ func ReconstructFile(taskId string, reconstructFileSectionsStream models.StreamP
 
 	// Read all pre-processing sections from the stream
 	toBeReconstructedStreamTopicName := fmt.Sprintf("Reconstruct-%v", taskId)
+	consumerId := fmt.Sprintf("Reconstruct-%v-Consumer", taskId)
 
 	reconstructFileSectionsStreamConsumer, err := reconstructFileSectionsStream.CreateStreamConsumer(
 		utils.NewContextWithDefaultTimeout(),
 		constants.FILE_RECONSTRUCTION_STREAM_NAME,
 		toBeReconstructedStreamTopicName,
-		taskId,
+		consumerId,
 	)
 
 	if err != nil {
@@ -57,17 +58,21 @@ func ReconstructFile(taskId string, reconstructFileSectionsStream models.StreamP
 		return fmt.Errorf("failed to write results to file: %v", err)
 	}
 
-	// clean up the topics that were created
-	err = reconstructFileSectionsStream.DeleteStreamTopic(
+	//delete the consumer
+	err = reconstructFileSectionsStream.DeleteStreamConsumer(
 		utils.NewContextWithDefaultTimeout(),
 		constants.FILE_RECONSTRUCTION_STREAM_NAME,
-		toBeReconstructedStreamTopicName,
+		consumerId,
 	)
 
-	// failed to clean up the topics results
+	// failed to clean up the consumer
 	if err != nil {
-		return fmt.Errorf("failed to delete reconstruct stream topics: %v", err)
+		err = fmt.Errorf("failed to delete reconstruct stream consumer: %v", err)
+		log.Printf(err.Error())
+		return err
 	}
+
+	log.Printf("Successfully deleted reconstruct stream consumer: [%v]", consumerId)
 
 	return nil
 }

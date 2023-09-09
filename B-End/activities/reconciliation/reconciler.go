@@ -2,12 +2,10 @@ package reconciliation
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"reconciler.io/constants"
 	"reconciler.io/models"
-	"reconciler.io/models/enums/file_purpose"
 	"reconciler.io/models/enums/recon_status"
 	"reconciler.io/utils"
 	"sync"
@@ -50,7 +48,7 @@ func BeginFileReconciliation(
 
 		if err != nil {
 			log.Printf("Error getting next PrimarySection: %v", err)
-			break
+			continue
 		}
 
 		log.Printf("Begining reconciliation for PrimaryFileSection:[%v]", primaryFileSection.SectionSequenceNumber)
@@ -136,6 +134,11 @@ func BeginFileReconciliation(
 			comparisonFile.ID,
 			&wg,
 		)
+
+		if primaryFileSection.IsLastSection {
+			log.Printf("finished started reconciling all primary sections for file: [%v]", primaryFile.ReconciliationTaskID)
+			break
+		}
 	}
 	// Wait for all recon go routines
 	// to finish
@@ -150,8 +153,20 @@ func BeginFileReconciliation(
 
 	if err != nil {
 		log.Printf("Error deleting PrimaryFileSectionConsumer: [%v], Error: %v", consumerId, err)
-	} else {
-		log.Printf("Successfully deleted PrimaryFileSectionConsumer: [%v]", consumerId)
+		return err
+	}
+
+	log.Printf("Successfully deleted PrimaryFileSectionConsumer: [%v]", consumerId)
+
+	err = primaryFile.ReadFileResultsStream.DeleteStreamTopic(
+		utils.NewContextWithDefaultTimeout(),
+		constants.PRIMARY_FILE_SECTIONS_STREAM_NAME,
+		topicName,
+	)
+
+	if err != nil {
+		log.Printf("Error deleting PrimaryFileSectionTopic: [%v], Error: %v", consumerId, err)
+		return err
 	}
 
 	return nil
@@ -181,16 +196,16 @@ func ReconcileFileSection(
 	reconConfig models.ReconciliationConfigs,
 	comparisonFileID string,
 ) (models.FileSection, error) {
-	if primarySection.OriginalFilePurpose != file_purpose.PrimaryFile {
-		return models.FileSection{}, errors.New("primary section must be of type PrimaryFile")
-	}
+
 	consumerId := fmt.Sprintf("%v-%v", primarySection.SectionSequenceNumber, primarySection.FileID)
+
 	comparisonSectionsStreamConsumer, err := comparisonSectionsStream.CreateStreamConsumer(
 		utils.NewContextWithDefaultTimeout(),
 		constants.COMPARISON_FILE_SECTIONS_STREAM_NAME,
 		comparisonFileID,
 		consumerId,
 	)
+
 	if err != nil {
 		return primarySection, err
 	}
@@ -201,6 +216,7 @@ func ReconcileFileSection(
 			primarySection.SectionSequenceNumber,
 			primarySection.FileID,
 		)
+
 		comparisonSection, err := comparisonSectionsStreamConsumer.FetchNext()
 
 		if err != nil {
@@ -216,10 +232,6 @@ func ReconcileFileSection(
 			primarySection.FileID,
 		)
 
-		if comparisonSection.OriginalFilePurpose != file_purpose.ComparisonFile {
-			return models.FileSection{}, errors.New("comparison section must be of type ComparisonFile")
-		}
-
 		log.Printf(
 			"Reconciling PrimaryFileSection [%v] "+
 				"with ComparisonFileSection [%v], FileID: [%v]",
@@ -229,6 +241,14 @@ func ReconcileFileSection(
 		)
 
 		primarySection = reconcileWithComparisonSection(primarySection, *comparisonSection, reconConfig)
+
+		log.Printf(
+			"Finished Reconciling PrimaryFileSection [%v] "+
+				"with ComparisonFileSection [%v], FileID: [%v]",
+			primarySection.SectionSequenceNumber,
+			comparisonSection.SectionSequenceNumber,
+			primarySection.FileID,
+		)
 
 		if primarySection.AllRowsAreReconciled() {
 			log.Printf("Finished reconciling ALL rows for primaryFileSectionID:[%v], FileID: [%v]",
@@ -255,9 +275,10 @@ func ReconcileFileSection(
 
 	if err != nil {
 		log.Printf("Error deleting ComparsionFileSectionConsumer: [%v], Error: %v", consumerId, err)
-	} else {
-		log.Printf("Successfully deleted ComparsionFileSectionConsumer: [%v]", consumerId)
+		return primarySection, nil
 	}
+
+	log.Printf("Successfully deleted ComparsionFileSectionConsumer: [%v]", consumerId)
 
 	return primarySection, nil
 }
