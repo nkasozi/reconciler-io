@@ -16,8 +16,8 @@ func TestCreateReconciliationTask(t *testing.T) {
 		ComparisonPairs: []models.ComparisonPair{},
 		ReconConfig:     models.ReconciliationConfigs{},
 	}
-
-	taskID, err := SaveTaskDetails(ctx, taskDetails)
+	repo := NewTaskDetailsRepository()
+	taskID, err := repo.SaveTaskDetails(ctx, taskDetails)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, taskID)
 }
@@ -25,6 +25,7 @@ func TestCreateReconciliationTask(t *testing.T) {
 func TestUpdateReconciliationTask(t *testing.T) {
 	ctx := context.Background()
 	taskDetails := models.ReconTaskDetails{
+		ID:              "test-id",
 		IsDone:          false,
 		HasBegun:        false,
 		ComparisonPairs: []models.ComparisonPair{},
@@ -32,21 +33,23 @@ func TestUpdateReconciliationTask(t *testing.T) {
 	}
 
 	// Create a task first.
-	taskID, _ := SaveTaskDetails(ctx, taskDetails)
+	repo := NewTaskDetailsRepository()
+	taskID, _ := repo.SaveTaskDetails(ctx, taskDetails)
 
 	// Update the task.
 	taskDetails.IsDone = true
-	err := UpdateReconciliationTask(ctx, taskID, taskDetails)
+	err := repo.UpdateReconciliationTask(ctx, taskDetails)
 	assert.NoError(t, err)
 
 	// Retrieve the task and check the updated value.
-	updatedTask, _ := GetReconciliationTaskStatus(ctx, taskID)
+	updatedTask, _ := repo.GetReconciliationTaskStatus(ctx, taskID)
 	assert.True(t, updatedTask.IsDone)
 }
 
 func TestGetReconciliationTaskStatus(t *testing.T) {
 	ctx := context.Background()
 	taskDetails := models.ReconTaskDetails{
+		ID:              "test-ID",
 		IsDone:          false,
 		HasBegun:        false,
 		ComparisonPairs: []models.ComparisonPair{},
@@ -54,10 +57,11 @@ func TestGetReconciliationTaskStatus(t *testing.T) {
 	}
 
 	// Create a task first.
-	taskID, _ := SaveTaskDetails(ctx, taskDetails)
+	repo := NewTaskDetailsRepository()
+	taskID, _ := repo.SaveTaskDetails(ctx, taskDetails)
 
 	// Retrieve the task.
-	retrievedTask, err := GetReconciliationTaskStatus(ctx, taskID)
+	retrievedTask, err := repo.GetReconciliationTaskStatus(ctx, taskID)
 	assert.NoError(t, err)
 	assert.Equal(t, taskID, retrievedTask.ID)
 }
@@ -66,6 +70,7 @@ func TestGetReconciliationTaskStatus_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	// Try to retrieve a non-existent task.
-	_, err := GetReconciliationTaskStatus(ctx, "non_existent_task")
+	repo := NewTaskDetailsRepository()
+	_, err := repo.GetReconciliationTaskStatus(ctx, "non_existent_task")
 	assert.Error(t, err)
 }

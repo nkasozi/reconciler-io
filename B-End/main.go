@@ -16,17 +16,14 @@ func main() {
 
 	//set up a gin server
 	server := http.NewRestApiServer()
-
-	// Apply the repository middleware to the router
-	server.Use(repositories.FileDetailsRepositoryMiddleware(fileDetailsRepo))
-	server.Use(repositories.TaskDetailsRepositoryMiddleware(taskDetailsRepo))
+	httpRequestHandler := handlers.NewHttpRequestHandler(taskDetailsRepo, fileDetailsRepo)
 
 	//register the routes and handlers
-	server.POST("/tasks", handlers.CreateReconciliationTask)
-	server.POST("/tasks/:id/primary-file", handlers.UploadPrimaryFile)
-	server.POST("/tasks/:id/comparison-file", handlers.UploadComparisonFile)
-	server.POST("/tasks/:id/start-reconciliation", handlers.StartReconciliation)
-	server.GET("/tasks/:id", handlers.GetReconciliationTaskStatus)
+	server.POST("/tasks", httpRequestHandler.CreateReconciliationTask)
+	server.POST("/tasks/:id/primary-file", httpRequestHandler.UploadPrimaryFile)
+	server.POST("/tasks/:id/comparison-file", httpRequestHandler.UploadComparisonFile)
+	server.POST("/tasks/:id/start-reconciliation", httpRequestHandler.StartReconciliation)
+	server.GET("/tasks/:id", httpRequestHandler.GetReconciliationTaskStatus)
 
 	// Start the server
 	err := server.Run(":9090")

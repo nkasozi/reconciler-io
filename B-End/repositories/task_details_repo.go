@@ -7,7 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"sync"
 
-	"reconciler.io/constants"
 	"reconciler.io/models"
 	"strconv"
 )
@@ -40,26 +39,6 @@ func (r *TaskDetailsRepository) SaveTaskDetails(ctx context.Context, taskDetails
 		taskDetails.ID = taskID
 	}
 
-	toBeReconstructedFileSectionsStream, err := models.NewStreamProvider(constants.NATS_URL)
-
-	if err != nil {
-		err = fmt.Errorf("error on creating toBeReconstructedFileSectionsStream: [%v]", err)
-		return "", err
-	}
-
-	topicName := fmt.Sprintf("Reconstruct-%v", taskDetails.ID)
-	err = toBeReconstructedFileSectionsStream.SetupStream(
-		ctx,
-		constants.FILE_RECONSTRUCTION_STREAM_NAME,
-		topicName,
-	)
-
-	if err != nil {
-		err = fmt.Errorf("error on setting up toBeReconstructedFileSectionsStream: [%v]", err)
-		return "", err
-	}
-
-	taskDetails.FileToBeReconstructedChannel = toBeReconstructedFileSectionsStream
 	r.reconTasksMap[taskDetails.ID] = &taskDetails
 
 	return taskDetails.ID, nil
